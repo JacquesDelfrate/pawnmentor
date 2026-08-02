@@ -1,0 +1,24 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Stockfish binary (platform-specific, use STOCKFISH_PATH env var instead)
+stockfish-windows-x86-64-avx2.exe
+
+# Local dev SQLite database (no migration tooling yet -- schema changes
+# during development mean dropping and recreating this file; see app/db.py)
+*.db
+
+# Node
+web/node_modules
+web/dist
+
+# Claude Code local settings (machine-specific tool permissions, not shared)
+.claude/settings.local.json
