@@ -1,0 +1,32 @@
+services:
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Absolute sqlite path onto the named volume below, so review data
+      # survives container restarts (default in app/config.py is a relative
+      # path in the working directory, which would live inside the
+      # container's writable layer and disappear on recreate).
+      DATABASE_URL: sqlite:////data/pawnmentor.db
+      ENGINE_POOL_SIZE: ${ENGINE_POOL_SIZE:-2}
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-}
+      VLLM_MODEL: ${VLLM_MODEL:-}
+    volumes:
+      - backend_data:/data
+    # Lets VLLM_BASE_URL=http://host.docker.internal:<port>/v1 reach a vLLM
+    # server running on the host machine. Docker Desktop (Mac/Windows)
+    # resolves host.docker.internal automatically; this mapping is what
+    # makes it work on Linux hosts too.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build: ./web
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  backend_data:

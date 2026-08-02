@@ -1,0 +1,12 @@
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.git
+.gitignore
+web
+tests
+*.db
+stockfish-windows-x86-64-avx2.exe
+.claude
