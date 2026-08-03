@@ -9,6 +9,7 @@ import chess
 
 from app.graph.nodes.classify import Classification
 from app.graph.nodes.taxonomy import ErrorCategory
+from app.graph.state import MotifReport
 from app.guards.move_validator import MoveValidationError, validate_llm_output
 from app.llm.client import LLMClient
 
@@ -112,31 +113,74 @@ async def generate_dialogue(
 
 
 def _category_details(classification: Classification) -> str:
+    """Plain-language statement of the one verified fact behind the category.
+
+    Drawn from `motifs_introduced` for the caused-by-this-move categories and
+    `motifs_unresolved` for the one about failing to act, so the wording can
+    honestly say "now" or "still" -- describing a pre-existing weakness as
+    something the move just created is exactly the bug this avoids.
+    """
     diagnosis = classification.diagnosis
-    motifs = diagnosis.motifs_after
+    introduced = diagnosis.motifs_introduced
+    unresolved = diagnosis.motifs_unresolved
     category = classification.category
 
-    if category == ErrorCategory.HUNG_PIECE and motifs.hanging_pieces:
-        hp = motifs.hanging_pieces[0]
+    if category == ErrorCategory.HUNG_PIECE and introduced.hanging_pieces:
+        hp = introduced.hanging_pieces[0]
         return (
             f"Your {chess.piece_name(hp.piece_type)} is now undefended "
             "and can be captured for free."
         )
-    if category == ErrorCategory.ALLOWED_FORK and motifs.forks:
-        fk = motifs.forks[0]
+    if category == ErrorCategory.ALLOWED_FORK and introduced.forks:
+        fk = introduced.forks[0]
         return (
             f"The opponent's {chess.piece_name(fk.forker_piece_type)} now attacks two "
             "of your pieces at the same time -- you can only save one."
         )
-    if category == ErrorCategory.WALKED_INTO_PIN and motifs.pins:
-        pin = motifs.pins[0]
+    if category == ErrorCategory.WALKED_INTO_PIN and introduced.pins:
+        pin = introduced.pins[0]
         return (
             f"Your {chess.piece_name(pin.pinned_piece_type)} is now pinned against "
             f"your king by the opponent's {chess.piece_name(pin.pinner_piece_type)}."
         )
     if category == ErrorCategory.BAD_TRADE:
         return "The capture you played loses material once the full exchange is played out."
+    if category == ErrorCategory.MISSED_EXISTING_THREAT:
+        return _unresolved_details(unresolved)
     return (
         "The evaluation dropped significantly here, though it doesn't match one of "
         "the specific patterns this coach checks for."
+    )
+
+
+def _unresolved_details(unresolved: MotifReport) -> str:
+    """Wording for a weakness that predates the move and survived it.
+
+    Phrased as "already"/"still" throughout: the player did not create this,
+    they declined a chance to deal with it, and the coaching has to say so
+    or it repeats the misattribution in gentler words.
+    """
+    if unresolved.hanging_pieces:
+        hp = unresolved.hanging_pieces[0]
+        return (
+            f"Your {chess.piece_name(hp.piece_type)} was already undefended before this "
+            "move and still is -- the engine's move dealt with that, yours left it."
+        )
+    if unresolved.forks:
+        fk = unresolved.forks[0]
+        return (
+            f"The opponent's {chess.piece_name(fk.forker_piece_type)} was already attacking "
+            "two of your pieces at once, and still is after this move -- the engine's "
+            "move broke that up."
+        )
+    if unresolved.pins:
+        pin = unresolved.pins[0]
+        return (
+            f"Your {chess.piece_name(pin.pinned_piece_type)} was already pinned against your "
+            f"king by the opponent's {chess.piece_name(pin.pinner_piece_type)} before this "
+            "move, and still is -- the engine's move relieved the pin, yours did not."
+        )
+    return (
+        "A weakness that was already on the board survived this move, though the "
+        "engine's move would have dealt with it."
     )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import chess
 import pytest
 
+from app.analysis.pin import find_pins
 from app.engine.pool import EnginePool
 from app.engine.trajectory import eval_trajectory
 from app.graph.nodes.classify import classify_error
@@ -62,3 +63,45 @@ def test_walked_into_pin(pool: EnginePool) -> None:
     # Bxc3 is -10, not profitable) -- isolates the pin from hung-piece.
     category = _classify(pool, "4k3/8/8/8/1b6/8/1P6/1N2K3 w - - 0 1", "b1c3")
     assert category == ErrorCategory.WALKED_INTO_PIN
+
+
+def test_pre_existing_pin_is_not_blamed_on_the_move(pool: EnginePool) -> None:
+    # The exact position from the real review that motivated this: White's
+    # Nc3 is pinned by Bb4 *before* Ng5 is played and still is after, so the
+    # move did not walk into anything. Reporting motifs present after the
+    # move (rather than motifs the move introduced) told the player they had
+    # walked into a pin that predated their move.
+    fen = "rnbq1rk1/ppp2ppp/4p3/3p4/1b1PnB2/2NQ1N2/PPP1PPPP/R3KB1R w KQ - 6 7"
+    board = chess.Board(fen)
+    after = board.copy(stack=False)
+    after.push(chess.Move.from_uci("f3g5"))
+    assert find_pins(board, chess.WHITE)  # pin already there beforehand
+    assert find_pins(after, chess.WHITE)  # and still there afterwards
+
+    trajectory = eval_trajectory(pool, board, [chess.Move.from_uci("f3g5")], depth=12)
+    flagged = FlaggedError(move_eval=trajectory[0], reachability_gap_cp=0)
+    diagnosis = diagnose_error(pool, flagged, depth=16)
+
+    assert diagnosis.motifs_after.pins, "pin is present after the move"
+    assert not diagnosis.motifs_introduced.pins, "but the move did not create it"
+    assert classify_error(diagnosis).category != ErrorCategory.WALKED_INTO_PIN
+
+
+def test_unresolved_threat_requires_the_best_move_to_have_fixed_it(pool: EnginePool) -> None:
+    # MISSED_EXISTING_THREAT is only a fair charge when dealing with the
+    # threat was demonstrably available, so motifs_unresolved is scoped to
+    # weaknesses the engine's own move clears. Anything the best move leaves
+    # standing too is nobody's fault and must not appear there.
+    fen = "rnbq1rk1/ppp2ppp/4p3/3p4/1b1PnB2/2NQ1N2/PPP1PPPP/R3KB1R w KQ - 6 7"
+    board = chess.Board(fen)
+    trajectory = eval_trajectory(pool, board, [chess.Move.from_uci("f3g5")], depth=12)
+    flagged = FlaggedError(move_eval=trajectory[0], reachability_gap_cp=0)
+    diagnosis = diagnose_error(pool, flagged, depth=16)
+
+    best = chess.Move.from_uci(diagnosis.flagged_error.move_eval.eval_before.analysis.best_move_uci)
+    if_best = board.copy(stack=False)
+    if_best.push(best)
+    survives_best = {(p.pinned_square, p.pinner_square) for p in find_pins(if_best, chess.WHITE)}
+
+    for pin in diagnosis.motifs_unresolved.pins:
+        assert (pin.pinned_square, pin.pinner_square) not in survives_best
