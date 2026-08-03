@@ -1,0 +1,52 @@
+# Local LLM for the classification/dialogue nodes, pulled into the root
+# stack by the `include:` in ../docker-compose.yml.
+#
+# To try a different model, copy this file (e.g. docker-compose-llama3-8b.yaml),
+# change the image/command, and point LLM_COMPOSE_FILE at it in .env. The
+# service must stay named `vllm` so the backend's default VLLM_BASE_URL
+# (http://vllm:8000/v1) keeps resolving -- or override that too.
+#
+# Requires an NVIDIA GPU with the container toolkit. Without one this
+# service fails to start and takes `docker compose up` with it; drop the
+# include and point VLLM_BASE_URL at a hosted endpoint instead.
+#
+# The AWQ build is deliberate: an unquantised Qwen3 on this stack routes
+# into vLLM's newer GPU runner, which hard-requires CUDA pinned memory,
+# which vLLM itself disables under WSL2 -- crashing at startup with
+# "UVA is not available". The quantised path avoids that entirely.
+services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    command: [
+      "--model", "Qwen/Qwen3-14B-AWQ",
+      "--quantization", "awq_marlin",
+      "--gpu-memory-utilization", "0.9",
+      "--max-model-len", "8192",
+      "--dtype", "auto",
+      "--enable-auto-tool-choice",
+      "--tool-call-parser", "openai"
+    ]
+    ports:
+      - "8200:8000"
+    volumes:
+      # Weights are ~9GB. Kept on the host so they survive `down -v`, and
+      # shareable with an existing download via HF_CACHE_DIR.
+      - ${HF_CACHE_DIR:-./local_llms/.cache/huggingface}:/root/.cache/huggingface
+    ipc: host
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+    # Informational: the model takes minutes to load, and this is what makes
+    # `docker compose ps` show when reviews will actually work.
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 60s

@@ -1,3 +1,11 @@
+# The LLM lives in its own file under local_llms/ so alternative models can
+# be swapped in without touching this one -- set LLM_COMPOSE_FILE in .env to
+# point at a different definition. Pulled in here rather than left to a
+# separate `-f` so that plain `docker compose up --build -d` starts the
+# whole stack.
+include:
+  - path: ${LLM_COMPOSE_FILE:-./local_llms/docker-compose-qwen3-14b.yaml}
+
 services:
   backend:
     build: .
@@ -10,16 +18,24 @@ services:
       # container's writable layer and disappear on recreate).
       DATABASE_URL: sqlite:////data/pawnmentor.db
       ENGINE_POOL_SIZE: ${ENGINE_POOL_SIZE:-2}
-      VLLM_BASE_URL: ${VLLM_BASE_URL:-}
-      VLLM_MODEL: ${VLLM_MODEL:-}
+      # Addresses the included `vllm` service by name on the compose network
+      # -- note port 8000 (inside the container), not the 8200 host mapping.
+      # Override both in .env to use a vLLM server hosted elsewhere.
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-http://vllm:8000/v1}
+      VLLM_MODEL: ${VLLM_MODEL:-Qwen/Qwen3-14B-AWQ}
     volumes:
       - backend_data:/data
-    # Lets VLLM_BASE_URL=http://host.docker.internal:<port>/v1 reach a vLLM
-    # server running on the host machine. Docker Desktop (Mac/Windows)
-    # resolves host.docker.internal automatically; this mapping is what
-    # makes it work on Linux hosts too.
+    # Only needed if VLLM_BASE_URL is overridden to reach a server running on
+    # the host rather than the included service. Docker Desktop resolves
+    # host.docker.internal on its own; this mapping adds it on Linux hosts.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Start-order only, deliberately not `condition: service_healthy`: the
+    # model takes minutes to load, and nothing outside a review needs it, so
+    # blocking the API that long would make browsing and ingesting games
+    # needlessly unavailable.
+    depends_on:
+      - vllm
 
   frontend:
     build: ./web

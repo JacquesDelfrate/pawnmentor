@@ -27,7 +27,11 @@ web/dist
 # committed template; the real .env never is.
 .env
 
-# Machine-specific compose additions (e.g. attaching to a vLLM server that
-# lives in a different compose project on this host). Compose merges this
-# automatically when present.
+# Machine-specific compose additions. Compose merges this automatically
+# when present.
 docker-compose.override.yml
+
+# Downloaded model weights (~9GB). Scoped to .cache only -- the compose
+# files beside it are tracked, and docker-compose.yml's include: breaks
+# without them.
+local_llms/.cache/
