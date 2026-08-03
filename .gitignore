@@ -22,3 +22,12 @@ web/dist
 
 # Claude Code local settings (machine-specific tool permissions, not shared)
 .claude/settings.local.json
+
+# Local runtime config -- may hold endpoints/keys. .env.example is the
+# committed template; the real .env never is.
+.env
+
+# Machine-specific compose additions (e.g. attaching to a vLLM server that
+# lives in a different compose project on this host). Compose merges this
+# automatically when present.
+docker-compose.override.yml

@@ -23,6 +23,11 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 
 COPY app ./app
+# The dialogue node reads prompts/ from the repo root at runtime
+# (app/graph/nodes/dialogue.py resolves it relative to the package), so it
+# has to be in the image -- without it, every coaching generation fails with
+# FileNotFoundError the first time a review actually flags an error.
+COPY prompts ./prompts
 RUN uv sync --frozen --no-dev
 
 EXPOSE 8000
