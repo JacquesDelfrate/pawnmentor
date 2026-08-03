@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -7,10 +9,25 @@ import chess
 
 from app.graph.nodes.classify import Classification
 from app.graph.nodes.taxonomy import ErrorCategory
-from app.guards.move_validator import validate_llm_output
+from app.guards.move_validator import MoveValidationError, validate_llm_output
 from app.llm.client import LLMClient
 
-_PROMPT_PATH = Path(__file__).resolve().parents[3] / "prompts" / "dialogue_v1.md"
+logger = logging.getLogger("app.graph.dialogue")
+
+_PROMPT_PATH = Path(__file__).resolve().parents[3] / "prompts" / "dialogue_v2.md"
+
+MAX_DIALOGUE_ATTEMPTS = 3
+
+# Reasoning models (Qwen3 among them) wrap internal scratch work in <think>
+# tags ahead of the real answer. That text is never coaching output, so it is
+# cut before anything else happens to the response -- otherwise it would be
+# rendered to the user verbatim, and its move-by-move deliberation would trip
+# the validator on notation the final answer never actually uses.
+_REASONING_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+class EmptyDialogueError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,11 +44,18 @@ async def generate_dialogue(
     """Generates the Socratic explanation for a classified error -- Rule 0's
     remaining LLM jobs (dialogue, explanations). Every move the LLM is given
     license to mention is passed in as an already-verified fact, and the
-    output is checked by move_validator before being trusted; category
-    details are deliberately phrased with piece names rather than square
-    coordinates to avoid move_validator false-positiving on ordinary prose
-    ("the knight on e5" is SAN-shaped enough to get flagged as an unverified
-    move token by the same regex that's supposed to catch hallucinations).
+    delivered text is checked by move_validator before being trusted.
+
+    Bare square names are the practical hazard here: move_validator cannot
+    tell "your knight moved to g5" (prose) from "g5" (a pawn-push claim), and
+    it correctly fails closed on the ambiguity. Rule 0 forbids loosening the
+    validator or allowlisting around it, and rewriting the model's text to
+    slip past the guard would defeat the guard, so the only honest lever is
+    to make the model comply: dialogue_v2.md bans bare coordinates, and a
+    rejected attempt is retried with the offending tokens quoted back. A
+    14B model breaks the rule often enough that prompt wording alone did not
+    hold up in practice. If every attempt fails the review still fails --
+    unverified move text never reaches the user.
     """
     diagnosis = classification.diagnosis
     move_eval = diagnosis.flagged_error.move_eval
@@ -39,8 +63,9 @@ async def generate_dialogue(
 
     move_played = move_eval.move
     best_move = chess.Move.from_uci(move_eval.eval_before.analysis.best_move_uci)
+    verified = [move_played, best_move]
 
-    prompt = _PROMPT_PATH.read_text(encoding="utf-8").format(
+    base_prompt = _PROMPT_PATH.read_text(encoding="utf-8").format(
         player_rating=player_rating,
         mover_color="White" if move_eval.mover == chess.WHITE else "Black",
         move_played_san=board_before.san(move_played),
@@ -49,11 +74,41 @@ async def generate_dialogue(
         category_details=_category_details(classification),
     )
 
-    response = await llm.complete(prompt, max_tokens=400, temperature=0.4)
+    last_rejection: MoveValidationError | None = None
+    for attempt in range(MAX_DIALOGUE_ATTEMPTS):
+        prompt = base_prompt
+        if last_rejection is not None:
+            prompt += (
+                "\n\n## Your previous attempt was rejected\n"
+                "It contained these forbidden tokens: "
+                f"{', '.join(last_rejection.offending_tokens)}.\n"
+                "Rewrite the two paragraphs conveying the same coaching without them. "
+                "Describe squares in words only."
+            )
 
-    validate_llm_output(response.text, board_before, [move_played, best_move])
+        # Budget covers a reasoning model's scratch work plus the two
+        # paragraphs that survive it; too low and the answer is truncated
+        # mid-<think>, leaving nothing once the block is stripped.
+        response = await llm.complete(prompt, max_tokens=900, temperature=0.4)
 
-    return CoachingMessage(classification=classification, text=response.text)
+        coaching_text = _REASONING_BLOCK.sub("", response.text).strip()
+        if not coaching_text:
+            raise EmptyDialogueError("LLM returned no coaching text outside its reasoning block")
+
+        try:
+            validate_llm_output(coaching_text, board_before, verified)
+        except MoveValidationError as rejection:
+            last_rejection = rejection
+            logger.warning(
+                "dialogue_rejected",
+                extra={"attempt": attempt + 1, "offending_tokens": rejection.offending_tokens},
+            )
+            continue
+
+        return CoachingMessage(classification=classification, text=coaching_text)
+
+    assert last_rejection is not None
+    raise last_rejection
 
 
 def _category_details(classification: Classification) -> str:
