@@ -45,6 +45,29 @@ def player_color(game: dict[str, object], username: str) -> chess.Color:
     return chess.WHITE if str(white).lower().endswith(username.lower()) else chess.BLACK
 
 
+def resolve_player_color(
+    white_username: str, black_username: str, player_username: str
+) -> chess.Color | None:
+    """Which side `player_username` is playing, or None if they aren't in the
+    game at all. Takes plain usernames rather than a Game row so it stays
+    usable from anywhere without dragging the DB models along.
+    """
+    target = player_username.lower()
+    if white_username.lower() == target:
+        return chess.WHITE
+    if black_username.lower() == target:
+        return chess.BLACK
+    return None
+
+
+def current_position(pgn: str) -> chess.Board:
+    """The live position: every move in the PGN replayed onto the board."""
+    board, moves = parse_game_moves(pgn)
+    for move in moves:
+        board.push(move)
+    return board
+
+
 def parse_game_moves(pgn: str) -> tuple[chess.Board, list[chess.Move]]:
     """The game's starting position and its move list, in playing order --
     what eval_trajectory needs (it replays moves onto `board` itself).

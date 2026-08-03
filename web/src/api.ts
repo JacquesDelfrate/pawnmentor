@@ -51,6 +51,21 @@ export function ingestGames(username: string): Promise<IngestedGame[]> {
   });
 }
 
+export type BestMove = {
+  game_id: number;
+  fen: string;
+  is_player_turn: boolean;
+  is_game_over: boolean;
+  best_move_san: string | null;
+  score_cp: number | null;
+  mate_in: number | null;
+  pv_san: string[];
+};
+
+export function getBestMove(gameId: number, username: string): Promise<BestMove> {
+  return request(`/games/${gameId}/best-move?username=${encodeURIComponent(username)}`);
+}
+
 export function createReview(
   gameId: number,
   playerUsername: string,
