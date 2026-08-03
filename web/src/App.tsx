@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { ApiError, createReview, ingestGames } from "./api";
-import type { IngestedGame, Review } from "./api";
+import { ApiError, createReview, getBestMove, ingestGames } from "./api";
+import type { BestMove, IngestedGame, Review } from "./api";
+import { BestMoveCard } from "./components/BestMoveCard";
 import { ErrorCard } from "./components/ErrorCard";
 
 type Status = { kind: "idle" } | { kind: "loading" } | { kind: "error"; message: string };
@@ -11,6 +12,7 @@ function App() {
   const [rating, setRating] = useState(1200);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [review, setReview] = useState<Review | null>(null);
+  const [bestMove, setBestMove] = useState<BestMove | null>(null);
   const [reviewingGameId, setReviewingGameId] = useState<number | null>(null);
 
   async function handleLoadGames(event: React.FormEvent) {
@@ -18,6 +20,7 @@ function App() {
     if (!username.trim()) return;
     setStatus({ kind: "loading" });
     setReview(null);
+    setBestMove(null);
     try {
       const fetched = await ingestGames(username.trim());
       setGames(fetched);
@@ -31,9 +34,14 @@ function App() {
     setStatus({ kind: "loading" });
     setReviewingGameId(gameId);
     setReview(null);
+    setBestMove(null);
     try {
-      const result = await createReview(gameId, username.trim(), rating);
-      setReview(result);
+      // Awaited first and rendered on its own: one engine call returns in
+      // seconds, where the review behind it takes a full-game scan plus an
+      // LLM call per flagged error. Bundling them would hide the fast
+      // answer behind the slow one.
+      setBestMove(await getBestMove(gameId, username.trim()));
+      setReview(await createReview(gameId, username.trim(), rating));
       setStatus({ kind: "idle" });
     } catch (err) {
       setStatus({ kind: "error", message: errorMessage(err) });
@@ -102,6 +110,14 @@ function App() {
               </li>
             ))}
           </ul>
+        )}
+
+        {bestMove && <BestMoveCard bestMove={bestMove} />}
+
+        {status.kind === "loading" && bestMove && !review && (
+          <p className="text-sm text-neutral-500">
+            Reviewing the moves already played&hellip; this takes a minute.
+          </p>
         )}
 
         {review && (

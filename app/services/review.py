@@ -9,7 +9,7 @@ from app.llm.client import LLMClient
 from app.llm.db_logging_client import DBLoggingLLMClient
 from app.llm.logging_client import LoggingLLMClient
 from app.models import FlaggedErrorRecord, Game, Review
-from app.services.chess_com import parse_game_moves
+from app.services.chess_com import parse_game_moves, resolve_player_color
 
 
 class ReviewError(RuntimeError):
@@ -33,11 +33,8 @@ async def run_review(
     the rich in-memory dataclasses (Diagnosis, Classification, ...) -- this
     is the one place that translates them into what actually gets persisted.
     """
-    if game.white_username.lower() == player_username.lower():
-        color = chess.WHITE
-    elif game.black_username.lower() == player_username.lower():
-        color = chess.BLACK
-    else:
+    color = resolve_player_color(game.white_username, game.black_username, player_username)
+    if color is None:
         raise ReviewError(f"{player_username!r} is not a player in game {game.id}")
 
     review = Review(

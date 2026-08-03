@@ -13,6 +13,7 @@ from app.db import create_db_engine, get_session, init_db
 from app.engine.pool import EnginePool
 from app.llm.vllm_client import build_vllm_client
 from app.models import FlaggedErrorRecord, Game, Review
+from app.services.advisor import AdvisorError, advise_best_move
 from app.services.chess_com import ChessComError, fetch_current_games
 from app.services.review import ReviewError, run_review
 
@@ -98,6 +99,54 @@ def ingest_games(request: IngestRequest, session: DbSession) -> list[Game]:
         ingested.append(game)
 
     return ingested
+
+
+class BestMoveResponse(BaseModel):
+    game_id: int
+    fen: str
+    is_player_turn: bool
+    is_game_over: bool
+    best_move_san: str | None
+    score_cp: int | None
+    mate_in: int | None
+    pv_san: list[str]
+
+
+@app.get("/games/{game_id}/best-move", response_model=BestMoveResponse)
+def best_move(game_id: int, username: str, session: DbSession) -> BestMoveResponse:
+    """Engine recommendation for where the game stands right now.
+
+    Separate from /reviews rather than folded into it: this is fast (one
+    engine call) where a review is slow (a full-game scan plus an LLM call
+    per flagged error), and it goes stale the moment the opponent replies,
+    so it wants recomputing on demand rather than being persisted alongside
+    a review.
+    """
+    game = session.get(Game, game_id)
+    if game is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    try:
+        advice = advise_best_move(
+            app.state.engine_pool,
+            game.pgn,
+            game.white_username,
+            game.black_username,
+            username,
+        )
+    except AdvisorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return BestMoveResponse(
+        game_id=game_id,
+        fen=advice.fen,
+        is_player_turn=advice.is_player_turn,
+        is_game_over=advice.is_game_over,
+        best_move_san=advice.best_move_san,
+        score_cp=advice.score_cp,
+        mate_in=advice.mate_in,
+        pv_san=list(advice.pv_san),
+    )
 
 
 class ReviewRequest(BaseModel):
