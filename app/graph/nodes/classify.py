@@ -22,6 +22,12 @@ def classify_error(diagnosis: Diagnosis) -> Classification:
     logic in the LLM applies just as much to "was this a bad trade" as it
     does to "is this piece hanging").
 
+    Reads `motifs_introduced` rather than `motifs_after`, which is the whole
+    point of the three-position comparison in diagnose_error: a weakness
+    already on the board before the move is not something the move did, and
+    reporting it as one told players they had walked into pins that predated
+    their move.
+
     Priority order matters, and both overlaps below are the same shape: the
     more specific category is checked before the generic HUNG_PIECE
     fallback, because HUNG_PIECE would otherwise win every time and the more
@@ -34,19 +40,25 @@ def classify_error(diagnosis: Diagnosis) -> Classification:
       independently "hanging", since find_forks' own profitability check
       for each forked target is the exact same SEE > 0 threshold
       find_hanging_pieces uses.
+
+    MISSED_EXISTING_THREAT comes last among the substantive categories: it
+    only applies when the move created nothing, so it can never mask a
+    weakness the move actually caused.
     """
     move_eval = diagnosis.flagged_error.move_eval
-    motifs = diagnosis.motifs_after
+    introduced = diagnosis.motifs_introduced
 
     board_before = chess.Board(move_eval.eval_before.fen)
     if _is_bad_trade(board_before, move_eval.move):
         category = ErrorCategory.BAD_TRADE
-    elif motifs.forks:
+    elif introduced.forks:
         category = ErrorCategory.ALLOWED_FORK
-    elif motifs.pins:
+    elif introduced.pins:
         category = ErrorCategory.WALKED_INTO_PIN
-    elif motifs.hanging_pieces:
+    elif introduced.hanging_pieces:
         category = ErrorCategory.HUNG_PIECE
+    elif not diagnosis.motifs_unresolved.is_empty():
+        category = ErrorCategory.MISSED_EXISTING_THREAT
     else:
         category = ErrorCategory.OTHER_TACTICAL_OVERSIGHT
 

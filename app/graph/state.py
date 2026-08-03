@@ -17,6 +17,9 @@ class MotifReport:
     pins: tuple[Pin, ...]
     forks: tuple[Fork, ...]
 
+    def is_empty(self) -> bool:
+        return not (self.hanging_pieces or self.pins or self.forks)
+
 
 class MotifState(TypedDict):
     """State for the standalone single-position motif-check graph."""
